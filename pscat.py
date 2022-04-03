@@ -3,6 +3,7 @@
 # socat in one python file
 # The goal is to be able to replace socat in kubctl port-forward
 
+import os
 import time
 import io
 import sys
@@ -194,8 +195,8 @@ class PscatConnect(object):
                 if eof:
                     self._unregister(pipe)
 
-        for pipe in self.pipes:
-            pipe.close()
+        # should not close pipes manually cause the resource might still
+        # be used by parent processes. Let OS clean the resource
 
 def usage():
     pass
@@ -218,14 +219,8 @@ def pscat_open(address):
         s = socket.socket()
         s.connect((host, port))
         return Socket(rfd = s, wfd = s)
-    elif address.startswith('TCP-LISTEN:'): # TCP-LISTEN:port
-        components = address.split(':')
-        port = int(components[1])
-        s = socket.socket()
-        s.bind(('0.0.0.0', port))
-        s.listen()
-        conn, addr = s.accept()
-        return Socket(rfd = conn, wfd = conn)
+    elif address.startswith('TCP-LISTEN:'):
+        return open_socket(address)
     elif address.startswith('OPEN:'): # OPEN:<filename>
         components = address.split(':')
         filename = components[1]
@@ -233,6 +228,29 @@ def pscat_open(address):
         return Socket(rfd = input, wfd = None)
     else:
         raise Exception(f"address type not supported: {address}")
+
+def open_socket(address: str) -> Socket:
+    # TCP-LISTEN:port
+    components = address.split(':')
+    options = components[1].split(',') # e.g. <port>,reuseaddr,fork
+    port = int(options[0])
+
+    s = socket.socket()
+    if 'reuseaddr' in options:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    s.bind(('0.0.0.0', port))
+    s.listen()
+
+    dofork = 'fork' in options
+
+    conn, addr = s.accept()
+    while dofork and os.fork() != 0:
+        # parent would continue to accept new connections
+        conn, addr = s.accept()
+
+    return Socket(rfd = conn, wfd = conn)
+
 
 def pscat(args, address1, address2):
     sock1 = pscat_open(address1)
