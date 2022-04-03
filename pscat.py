@@ -3,32 +3,45 @@
 # socat in one python file
 # The goal is to be able to replace socat in kubctl port-forward
 
+import time
+import io
 import sys
 import argparse
 import logging
 from collections import namedtuple
 import selectors
+import socket
 
 log = logging.getLogger(__name__)
 logging.basicConfig(filename='pscat.log', encoding='utf-8', level=logging.DEBUG)
 
 Socket = namedtuple('Socket', ['rfd', 'wfd'])
 
-import io
+class Socket(object):
+    def __init__(self, rfd, wfd):
+        super(Socket, self).__init__()
+        self.rfd = rfd
+        self.wfd = wfd
+
 class ReaderWrapper(object):
     def __init__(self, io):
         super(ReaderWrapper, self).__init__()
         self.io = io
-        self.eof = False
+        self.eof = io is None
+        self.closed = io is None
+
+    def get_inner(self):
+        return self.io
 
     def next_batches(self, batch_size):
         """non-blocking fds would consume as much as we can by batches.
 
             this function assumes fd's ready for reading.
         """
-
         if self.eof:
             return None
+        if self.closed:
+            raise Exception('input was closed')
 
         if isinstance(self.io, io.TextIOWrapper):
             if self.io.isatty():
@@ -48,10 +61,8 @@ class ReaderWrapper(object):
         # stdin should use raw for reading
         bytes = self.io.buffer.raw.read(batch_size)
         if len(bytes) == 0:
-            log.debug('ala')
             self.eof = True
         else:
-            log.debug('asdf')
             yield bytes
 
     def _read_file_io(self, batch_size):
@@ -80,23 +91,42 @@ class ReaderWrapper(object):
                 yield bytes
 
     def close(self):
-        self.io.close()
+        if self.closed:
+            return
+        if isinstance(self.io, socket.socket):
+            self.io.shutdown(socket.SHUT_RD)
+        else:
+            self.io.close()
+        self.closed = True
 
 class WriterWrapper(object):
     def __init__(self, io):
         super(WriterWrapper, self).__init__()
         self.io = io
+        self.closed = io is None
+
+    def get_inner(self):
+        return self.io
+
     def write(self, bytes):
+        if self.closed:
+            raise Exception('output was closed')
+
         if isinstance(self.io, io.TextIOWrapper):
             self.io.buffer.raw.write(bytes)
         elif isinstance(self.io, io.IOBase):
             self.io.write(bytes)
         elif isinstance(self.io, socket.socket):
             self.io.sendall(bytes)
-    def close(self):
-        self.io.close()
 
-sel = selectors.DefaultSelector()
+    def close(self):
+        if self.closed:
+            return
+        if isinstance(self.io, socket.socket):
+            self.io.shutdown(socket.SHUT_WR)
+        else:
+            self.io.close()
+        self.closed = True
 
 def usage():
     pass
@@ -112,6 +142,13 @@ def pscat_open(address):
 
     if address == '-':
         return Socket(rfd = sys.stdin, wfd = sys.stdout)
+    elif address.startswith('TCP:'): # TCP:host:port
+        components = address.split(':')
+        host = components[1]
+        port = int(components[2])
+        s = socket.socket()
+        s.connect((host, port))
+        return Socket(rfd = s, wfd = s)
     else:
         raise Exception(f"address type not supported: {address}")
 
@@ -121,10 +158,15 @@ class Pipe(object):
         self.input = ReaderWrapper(rfd)
         self.output = WriterWrapper(wfd_fd)
 
+    def get_input(self):
+        return self.input
+    def get_output(self):
+        return self.output
+
     def transmit(self) -> bool:
         # returns true on EOF
         for batch in self.input.next_batches(4096):
-            log.debug(f'TRX batch: {batch}')
+            log.debug(f"TRX: {batch}")
             self.output.write(batch)
         return self.input.eof_met()
 
@@ -132,38 +174,59 @@ class Pipe(object):
         self.input.close()
         self.output.close()
 
-registerred_fds = set()
-def register_event(fileobj, event, data):
-    if fileobj in registerred_fds:
-        return
-    sel.register(fileobj, event, data)
-    registerred_fds.add(fileobj)
-def unregister(fileobj):
-    sel.unregister(fileobj)
-    registerred_fds.remove(fileobj)
+class PscatConnect(object):
+    """docstring for PscatConnect"""
+    def __init__(self, sock1, sock2, close_timeout=0.5):
+        super(PscatConnect, self).__init__()
+        self.sel = selectors.DefaultSelector()
+        self.pipes = []
+        self.stop_at = None
+        self.close_timeout = close_timeout
 
-def pscat_connect(sock1, sock2):
-    global registerred_fds
-    if sock1.rfd is not None and sock2.wfd is not None:
-        pipe = Pipe(sock1.rfd, sock2.wfd)
-        register_event(sock1.rfd, selectors.EVENT_READ, pipe)
+        if sock1.rfd is not None and sock2.wfd is not None:
+            pipe = Pipe(sock1.rfd, sock2.wfd)
+            self._register(pipe)
 
-    if sock2.rfd is not None and sock1.wfd is not None:
-        pipe = Pipe(sock2.rfd, sock1.wfd)
-        register_event(sock2.rfd, selectors.EVENT_READ, pipe)
+        if sock2.rfd is not None and sock1.wfd is not None:
+            pipe = Pipe(sock2.rfd, sock1.wfd)
+            self._register(pipe)
 
-    while len(sel.get_map()) > 0:
-        events = sel.select()
-        for key, mask in events:
-            pipe = key.data
-            eof = pipe.transmit()
-            if eof:
-                unregister(key.fileobj)
+    def _register(self, pipe):
+        input_fd = pipe.get_input().get_inner();
+        if input_fd in self.sel.get_map():
+            return
+        self.pipes.append(pipe)
+        self.sel.register(input_fd, selectors.EVENT_READ, (pipe))
+
+    def _unregister(self, pipe):
+        input_fd = pipe.get_input().get_inner();
+        if input_fd in self.sel.get_map():
+            self.sel.unregister(input_fd)
+            self.stop_at = time.time() + self.close_timeout
+
+    def run(self):
+        while len(self.sel.get_map()) > 0:
+            timeout = self.close_timeout if self.stop_at is not None else None
+            events = self.sel.select(timeout)
+
+            now = time.time()
+            if self.stop_at is not None and self.stop_at <= now:
+                break
+
+            for key, mask in events:
+                pipe = key.data
+                eof = pipe.transmit()
+                if eof:
+                    self._unregister(pipe)
+
+        for pipe in self.pipes:
+            pipe.close()
 
 def pscat(args, address1, address2):
     sock1 = pscat_open(address1)
     sock2 = pscat_open(address2)
-    return pscat_connect(sock1, sock2)
+    connect = PscatConnect(sock1, sock2)
+    return connect.run()
 
 def main():
     args = parse_args()
