@@ -37,7 +37,7 @@ class ReaderWrapper(object):
         if self.closed:
             raise Exception('input was closed')
 
-        if isinstance(self.io, io.TextIOWrapper):
+        if isinstance(self.io, io.IOBase):
             if self.io.isatty():
                 return self._read_stdin(batch_size)
             else:
@@ -129,10 +129,10 @@ class WriterWrapper(object):
         self.closed = True
 
 class Pipe(object):
-    def __init__(self, rfd, wfd_fd):
+    def __init__(self, rfd, wfd):
         super(Pipe, self).__init__()
         self.input = ReaderWrapper(rfd)
-        self.output = WriterWrapper(wfd_fd)
+        self.output = WriterWrapper(wfd)
 
     def get_input(self):
         return self.input
@@ -227,6 +227,11 @@ def pscat_open(address):
         s.listen()
         conn, addr = s.accept()
         return Socket(rfd = conn, wfd = conn)
+    elif address.startswith('OPEN:'): # OPEN:<filename>
+        components = address.split(':')
+        filename = components[1]
+        input = open(filename, 'rb')
+        return Socket(rfd = input, wfd = None)
     else:
         raise Exception(f"address type not supported: {address}")
 
