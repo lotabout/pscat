@@ -37,11 +37,10 @@ class ReaderWrapper(object):
         if self.closed:
             raise Exception('input was closed')
 
-        if isinstance(self.io, io.IOBase):
-            if self.io.isatty():
-                return self._read_stdin(batch_size)
-            else:
-                return self._read_file_io(batch_size)
+        if isinstance(self.io, io.TextIOWrapper):
+            return self._read_stdin(batch_size)
+        elif isinstance(self.io, io.IOBase):
+            return self._read_file_io(batch_size)
         elif isinstance(self.io, socket.socket):
             return self._read_socket(batch_size)
 
