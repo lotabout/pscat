@@ -1,0 +1,61 @@
+# Socat in one python file
+
+The initial goal was replace `socat` in `kubctl port-forward` (which however
+is no longer required in newer version), so that in systems that were not able
+to install socat could be replaced by this script.
+
+## What's been done
+
+- `TCP-LISTEN:<port>` for creating server
+    - only `fork` and `reuseaddr` option were implemented
+- `TCP:<host>:<port>` and `TCP4:<host>:<port>` for create connections
+- `OPEN:<file-path>` for opening file for reading
+- `-` for stdin and stdout, you could use shell's redir for reading from and
+    writing to files
+- No line ending tranlation at all. (I don't need it)
+
+## None Goal
+
+- Implement all the features of `socat`
+
+## Example
+
+### As an echo server
+
+```sh
+./pscat.py - TCP-LISTEN:8080
+```
+
+Note that TCP-LISTEN will accept only one connection. If you need to keep the
+server running, add `fork` option:
+
+
+```sh
+./pscat.py - TCP-LISTEN:8080,fork
+```
+
+### As an echo client
+
+```sh
+./pscat.py - TCP:localhost:8080
+```
+
+### transfer a file
+
+Receiving Side:
+
+```sh
+./pscat.py - TCP-LISTEN:8080 > file
+```
+
+Sending Side:
+
+```sh
+./pscat.py - TCP:server:8080 < file
+```
+
+### As a proxy
+
+```sh
+./pscat.py TCP-LISTEN:8080 TCP:remove:port
+```
