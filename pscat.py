@@ -39,9 +39,12 @@ class ReaderWrapper(object):
             raise Exception('input was closed')
 
         if isinstance(self.io, io.TextIOWrapper):
-            return self._read_stdin(batch_size)
+            if self.io.isatty():
+                return self._read_stdin(batch_size)
+            else:
+                return self._read_file_io(self.io.buffer.raw, batch_size)
         elif isinstance(self.io, io.IOBase):
-            return self._read_file_io(batch_size)
+            return self._read_file_io(self.io, batch_size)
         elif isinstance(self.io, socket.socket):
             return self._read_socket(batch_size)
 
@@ -59,12 +62,12 @@ class ReaderWrapper(object):
         else:
             yield bytes
 
-    def _read_file_io(self, batch_size):
+    def _read_file_io(self, file, batch_size):
         # File IO could be read till the end
-        bytes = self.io.read(batch_size)
+        bytes = file.read(batch_size)
         while len(bytes) > 0:
             yield bytes
-            bytes = self.io.read(batch_size)
+            bytes = file.read(batch_size)
         self.eof = True
 
     def _read_socket(self, batch_size):
