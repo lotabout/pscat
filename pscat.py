@@ -14,7 +14,7 @@ import selectors
 import socket
 
 log = logging.getLogger(__name__)
-logging.basicConfig(filename='pscat.log', encoding='utf-8', level=logging.DEBUG)
+# logging.basicConfig(filename='pscat.log', encoding='utf-8', level=logging.DEBUG)
 
 Socket = namedtuple('Socket', ['rfd', 'wfd'])
 
