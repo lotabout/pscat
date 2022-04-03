@@ -198,29 +198,21 @@ class PscatConnect(object):
         # should not close pipes manually cause the resource might still
         # be used by parent processes. Let OS clean the resource
 
-def usage():
-    pass
-
 def parse_args():
     parser = argparse.ArgumentParser(description='pscat')
     parser.add_argument('addr1', type=str, help='The first address')
     parser.add_argument('addr2', type=str, help='The first address')
     return parser.parse_args()
 
-def pscat_open(address):
+def pscat_open(address: str) -> Socket:
     log.info(f'opening address {address}')
 
     if address == '-':
         return Socket(rfd = sys.stdin, wfd = sys.stdout)
-    elif address.startswith('TCP:'): # TCP:host:port
-        components = address.split(':')
-        host = components[1]
-        port = int(components[2])
-        s = socket.socket()
-        s.connect((host, port))
-        return Socket(rfd = s, wfd = s)
+    elif address.startswith('TCP:') or address.startswith('TCP4:'): # TCP:host:port
+        return open_tcp(address)
     elif address.startswith('TCP-LISTEN:'):
-        return open_socket(address)
+        return open_tcp_listen(address)
     elif address.startswith('OPEN:'): # OPEN:<filename>
         components = address.split(':')
         filename = components[1]
@@ -229,7 +221,16 @@ def pscat_open(address):
     else:
         raise Exception(f"address type not supported: {address}")
 
-def open_socket(address: str) -> Socket:
+def open_tcp(address: str) -> Socket:
+    # TCP:host:port | TCP4:host:port
+    components = address.split(':')
+    host = components[1]
+    port = int(components[2])
+    s = socket.socket()
+    s.connect((host, port))
+    return Socket(rfd = s, wfd = s)
+
+def open_tcp_listen(address: str) -> Socket:
     # TCP-LISTEN:port
     components = address.split(':')
     options = components[1].split(',') # e.g. <port>,reuseaddr,fork
@@ -250,7 +251,6 @@ def open_socket(address: str) -> Socket:
         conn, addr = s.accept()
 
     return Socket(rfd = conn, wfd = conn)
-
 
 def pscat(args, address1, address2):
     sock1 = pscat_open(address1)
