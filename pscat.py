@@ -17,12 +17,6 @@ logging.basicConfig(filename='pscat.log', encoding='utf-8', level=logging.DEBUG)
 
 Socket = namedtuple('Socket', ['rfd', 'wfd'])
 
-class Socket(object):
-    def __init__(self, rfd, wfd):
-        super(Socket, self).__init__()
-        self.rfd = rfd
-        self.wfd = wfd
-
 class ReaderWrapper(object):
     def __init__(self, io):
         super(ReaderWrapper, self).__init__()
@@ -94,7 +88,10 @@ class ReaderWrapper(object):
         if self.closed:
             return
         if isinstance(self.io, socket.socket):
-            self.io.shutdown(socket.SHUT_RD)
+            try:
+                self.io.shutdown(socket.SHUT_RD)
+            except OSError:
+                pass
         else:
             self.io.close()
         self.closed = True
@@ -123,34 +120,13 @@ class WriterWrapper(object):
         if self.closed:
             return
         if isinstance(self.io, socket.socket):
-            self.io.shutdown(socket.SHUT_WR)
+            try:
+                self.io.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
         else:
             self.io.close()
         self.closed = True
-
-def usage():
-    pass
-
-def parse_args():
-    parser = argparse.ArgumentParser(description='pscat')
-    parser.add_argument('addr1', type=str, help='The first address')
-    parser.add_argument('addr2', type=str, help='The first address')
-    return parser.parse_args()
-
-def pscat_open(address):
-    log.info(f'opening address {address}')
-
-    if address == '-':
-        return Socket(rfd = sys.stdin, wfd = sys.stdout)
-    elif address.startswith('TCP:'): # TCP:host:port
-        components = address.split(':')
-        host = components[1]
-        port = int(components[2])
-        s = socket.socket()
-        s.connect((host, port))
-        return Socket(rfd = s, wfd = s)
-    else:
-        raise Exception(f"address type not supported: {address}")
 
 class Pipe(object):
     def __init__(self, rfd, wfd_fd):
@@ -221,6 +197,38 @@ class PscatConnect(object):
 
         for pipe in self.pipes:
             pipe.close()
+
+def usage():
+    pass
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='pscat')
+    parser.add_argument('addr1', type=str, help='The first address')
+    parser.add_argument('addr2', type=str, help='The first address')
+    return parser.parse_args()
+
+def pscat_open(address):
+    log.info(f'opening address {address}')
+
+    if address == '-':
+        return Socket(rfd = sys.stdin, wfd = sys.stdout)
+    elif address.startswith('TCP:'): # TCP:host:port
+        components = address.split(':')
+        host = components[1]
+        port = int(components[2])
+        s = socket.socket()
+        s.connect((host, port))
+        return Socket(rfd = s, wfd = s)
+    elif address.startswith('TCP-LISTEN:'): # TCP-LISTEN:port
+        components = address.split(':')
+        port = int(components[1])
+        s = socket.socket()
+        s.bind(('0.0.0.0', port))
+        s.listen()
+        conn, addr = s.accept()
+        return Socket(rfd = conn, wfd = conn)
+    else:
+        raise Exception(f"address type not supported: {address}")
 
 def pscat(args, address1, address2):
     sock1 = pscat_open(address1)
