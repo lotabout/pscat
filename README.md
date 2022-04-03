@@ -2,7 +2,7 @@
 
 The initial goal was replace `socat` in `kubctl port-forward` (which however
 is no longer required in newer version), so that in systems that were not able
-to install socat could be replaced by this script.
+to install socat this script could be a replacement.
 
 ## What's been done
 
@@ -19,6 +19,13 @@ to install socat could be replaced by this script.
 - Implement all the features of `socat`
 
 ## Example
+
+```sh
+./pscat.py <addr1> <addr2>
+```
+
+Think `pscat` as a tool for creating pipes connecting the read end of `addr1`
+and write end of `addr2` and vice versa.
 
 ### As an echo server
 
@@ -57,5 +64,5 @@ Sending Side:
 ### As a proxy
 
 ```sh
-./pscat.py TCP-LISTEN:8080 TCP:remove:port
+./pscat.py TCP-LISTEN:8080 TCP:remote:port
 ```
