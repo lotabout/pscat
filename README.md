@@ -49,19 +49,23 @@ server running, add `fork` option:
 
 ### transfer a file
 
-Receiving Side:
-
 ```sh
+# server side for receiving (with an IP for connection)
 ./pscat.py - TCP-LISTEN:8080 > file
-```
-
-Sending Side:
-
-```sh
+# client side for sending
 ./pscat.py - TCP:server:8080 < file
 ```
 
+```sh
+# server side for sending (with an IP for connection)
+./pscat.py - TCP-LISTEN:8080 < file
+# client side for receiving
+./pscat.py - TCP:server:8080 > file
+```
+
 ### As a proxy
+
+Listening on port `8080` and transfer all data to `remote:port`.
 
 ```sh
 ./pscat.py TCP-LISTEN:8080 TCP:remote:port
